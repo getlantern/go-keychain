@@ -14,6 +14,7 @@ package keychain
 */
 import "C"
 import "fmt"
+import "io/ioutil"
 
 // Error defines keychain errors
 type Error int
@@ -78,12 +79,15 @@ var (
 		 kSecAttrService
 	*/
 	SecClassGenericPassword SecClass = 1
+
+	SecClassCertificate SecClass = 2
 )
 
 // SecClassKey is the key type for SecClass
 var SecClassKey = attrKey(C.CFTypeRef(C.kSecClass))
 var secClassTypeRef = map[SecClass]C.CFTypeRef{
 	SecClassGenericPassword: C.CFTypeRef(C.kSecClassGenericPassword),
+	SecClassCertificate:     C.CFTypeRef(C.kSecClassCertificate),
 }
 
 var (
@@ -96,7 +100,8 @@ var (
 	// AccessGroupKey is for kSecAttrAccessGroup
 	AccessGroupKey = attrKey(C.CFTypeRef(C.kSecAttrAccessGroup))
 	// DataKey is for kSecValueData
-	DataKey = attrKey(C.CFTypeRef(C.kSecValueData))
+	DataKey    = attrKey(C.CFTypeRef(C.kSecValueData))
+	DataRefKey = attrKey(C.CFTypeRef(C.kSecValueRef))
 )
 
 // Synchronizable is the items synchronizable status
@@ -277,6 +282,33 @@ func NewGenericPassword(service string, account string, label string, data []byt
 	item.SetData(data)
 	item.SetAccessGroup(accessGroup)
 	return item
+}
+
+// NewCertificate creates a certificate item with the default keychain. The data must be DER encoded.
+func NewCertificate(data []byte, accessGroup string) (Item, error) {
+	item := NewItem()
+	file, err := ioutil.TempFile("", "certificate")
+	if err != nil {
+		return item, fmt.Errorf("Unable to create temp file: %v", err)
+	}
+	defer file.Close()
+	_, err = file.Write(data)
+	if err != nil {
+		return item, fmt.Errorf("Unable to write to temp file: %v", err)
+	}
+	file.Close()
+	b, err := BytesToCFData([]byte(file.Name()))
+	if err != nil {
+		return item, fmt.Errorf("Unable to convert DER data to CFData: %v", err)
+	}
+	cert, err := C.SecCertificateCreateWithData(nil, b)
+	if err != nil {
+		return item, fmt.Errorf("Unable to create certificate from data: %v", err)
+	}
+	item.SetSecClass(SecClassCertificate)
+	item.attr[DataRefKey] = C.CFTypeRef(cert)
+	item.SetAccessGroup(accessGroup)
+	return item, nil
 }
 
 // AddItem adds a Item to a Keychain

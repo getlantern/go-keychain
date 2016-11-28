@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
-	"github.com/keybase/go-keychain"
+	"github.com/getlantern/go-keychain"
+	"github.com/getlantern/keyman"
 )
 
 func TestAccess(t *testing.T) {
@@ -143,6 +145,67 @@ func TestAddingAndQueryingNewKeychain(t *testing.T) {
 	queryDefault := keychain.NewItem()
 	queryDefault.SetSecClass(keychain.SecClassGenericPassword)
 	queryDefault.SetService(service)
+	queryDefault.SetMatchLimit(keychain.MatchLimitOne)
+	queryDefault.SetReturnData(true)
+	resultsDefault, err := keychain.QueryItem(queryDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resultsDefault) != 0 {
+		t.Fatalf("Expected no results")
+	}
+}
+
+func TestAddingAndQueryingCertificate(t *testing.T) {
+	keychainPath := tempPath(t)
+	defer func() { _ = os.Remove(keychainPath) }()
+
+	accessGroup := ""
+
+	k, err := keychain.NewKeychain(keychainPath, "my password")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pk, err := keyman.GeneratePK(2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := pk.TLSCertificateFor("organization", "name", time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC), true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item, err := keychain.NewCertificate(cert.DER(), accessGroup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.UseKeychain(k)
+	if err = keychain.AddItem(item); err != nil {
+		t.Fatal(err)
+	}
+
+	query := keychain.NewItem()
+	query.SetSecClass(keychain.SecClassCertificate)
+	query.SetMatchSearchList(k)
+	query.SetAccessGroup(accessGroup)
+	query.SetMatchLimit(keychain.MatchLimitOne)
+	query.SetReturnData(true)
+
+	results, err := keychain.QueryItem(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	} else if string(results[0].Data) != string(cert.DER()) {
+		t.Fatalf("Expected certificate to be %s, got %s", cert.DER(), results[0].Data)
+	}
+
+	// Search default keychain to make sure it's not there
+	queryDefault := keychain.NewItem()
+	queryDefault.SetSecClass(keychain.SecClassCertificate)
 	queryDefault.SetMatchLimit(keychain.MatchLimitOne)
 	queryDefault.SetReturnData(true)
 	resultsDefault, err := keychain.QueryItem(queryDefault)
